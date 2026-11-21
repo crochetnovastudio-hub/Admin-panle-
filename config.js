@@ -3,7 +3,7 @@ window.CROCHET_CONFIG = {
     SUPABASE_URL: "https://ebwngkxxfrfiibvwlatg.supabase.co",
 
     // Your supplied publishable key
-    SUPABASE_ANON_KEY: "https://ebwngkxxfrfiibvwlatg.supabase.co/auth/v1/oauth/authorize",
+    SUPABASE_ANON_KEY: "sb_publishable_PdlHBaSZQqMJMB5eJmTE3A_LSDP2Nf_",
 
     // Must match the deployed Edge Function name
     FUNCTION_NAME: "products-admin",
