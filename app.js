@@ -1,25 +1,7 @@
 "use strict";
 
-/*
- * CROCHET NOVA STUDIO
- * GitHub-backed Admin Panel
- *
- * Backend required:
- * POST   /auth/login
- * GET    /products
- * POST   /products
- * PATCH  /products/:id
- * DELETE /products/:id
- * POST   /uploads/drive
- * POST   /uploads/image
- * POST   /sync/sheet7
- */
+const CFG = window.CROCHET_CONFIG;
 
-const CFG = window.CROCHET_CONFIG || {};
-const API_BASE = String(CFG.API_BASE_URL || "").replace(/\/+$/, "");
-const PAGE_SIZE = Number(CFG.PAGE_SIZE || 24);
-
-let sessionToken = null;
 let products = [];
 let total = 0;
 let offset = 0;
@@ -33,7 +15,7 @@ let selectedIds = new Set();
 const $ = id => document.getElementById(id);
 
 // -----------------------------
-// UI HELPERS
+// UI HELPERS & TOASTS
 // -----------------------------
 
 function escapeHTML(value) {
@@ -49,12 +31,10 @@ function escapeHTML(value) {
 function toast(message) {
     const el = $("toast");
     if (!el) return;
-
     el.textContent = message;
     el.style.display = "block";
 
     clearTimeout(toast.timer);
-
     toast.timer = setTimeout(() => {
         el.style.display = "none";
     }, 3200);
@@ -63,173 +43,118 @@ function toast(message) {
 function showMessage(message, success = false) {
     const el = $("messageBox");
     if (!el) return;
-
     el.textContent = message;
     el.classList.remove("hidden");
-
     el.style.background = success ? "#1e382e" : "#492f3a";
     el.style.color = success ? "#b9e4c9" : "#f2c8d1";
 }
 
 function setConnection(message, connected = false) {
-    const el = $("connectionStatus");
-    if (!el) return;
-
-    el.textContent = "● " + message;
-    el.style.color = connected ? "#b8d8bd" : "#e6a0a8";
+    const statusEl = $("connectionStatus");
+    if (!statusEl) return;
+    statusEl.textContent = (connected ? "● " : "● ") + message;
+    statusEl.style.color = connected ? "#b8d8bd" : "#e6a0a8";
 }
 
-function setBusy(button, busy, label) {
+function setBusy(button, busy, text) {
     if (!button) return;
-
+    button.disabled = busy;
     if (busy) {
-        if (!button.dataset.originalText) {
-            button.dataset.originalText = button.textContent;
-        }
-
-        button.disabled = true;
-        button.textContent = label;
+        button.dataset.oldText = button.textContent;
+        button.textContent = text;
     } else {
-        button.disabled = false;
-        button.textContent = button.dataset.originalText || label;
-        delete button.dataset.originalText;
+        button.textContent = button.dataset.oldText || text;
     }
 }
 
 // -----------------------------
-// API CONNECTION
+// BACKEND API CLIENT (APPS SCRIPT)
 // -----------------------------
 
-function requireApiConfig() {
-    if (!API_BASE) {
-        throw new Error(
-            "Backend URL missing. Configure API_BASE_URL in config.js."
-        );
-    }
-}
-
-async function request(path, options = {}, authenticated = true) {
-    requireApiConfig();
-
-    const headers = new Headers(options.headers || {});
-    headers.set("Accept", "application/json");
-
-    if (options.body !== undefined) {
-        headers.set("Content-Type", "application/json");
+async function api(method, action, payload = {}) {
+    if (!CFG.APPS_SCRIPT_URL) {
+        throw new Error("Google Apps Script URL is not configured in config.js");
     }
 
-    if (authenticated) {
-        if (!sessionToken) {
-            throw new Error("Please sign in again.");
-        }
+    const options = {
+        method: method,
+        headers: {
+            "Content-Type": "text/plain;charset=utf-8" // Avoids CORS preflight issues with Apps Script
+        },
+        body: JSON.stringify({ action, ...payload })
+    };
 
-        headers.set("Authorization", `Bearer ${sessionToken}`);
-    }
-
-    const response = await fetch(API_BASE + path, {
-        ...options,
-        headers,
-        body: options.body === undefined
-            ? undefined
-            : JSON.stringify(options.body)
-    });
-
-    let result = {};
+    const response = await fetch(CFG.APPS_SCRIPT_URL, options);
+    let result;
 
     try {
         result = await response.json();
     } catch {
-        throw new Error("Invalid backend response.");
-    }
-
-    if (response.status === 401 || response.status === 403) {
-        if (authenticated) signOut(false);
-
-        throw new Error(
-            result.error || "Session expired or access denied."
-        );
+        throw new Error("Invalid response received from Apps Script backend.");
     }
 
     if (!response.ok || result.success === false) {
-        throw new Error(
-            result.error || `Request failed (${response.status}).`
-        );
+        throw new Error(result.error || `Request failed with status ${response.status}`);
     }
 
     return result;
 }
 
 // -----------------------------
-// ADMIN PASSWORD LOGIN
+// AUTHENTICATION & SESSION
 // -----------------------------
 
-async function login(event) {
+function login(event) {
     event.preventDefault();
-
     const button = $("loginBtn");
-
     setBusy(button, true, "Verifying...");
     $("loginError").textContent = "";
 
-    try {
-        const password = $("password").value;
+    const enteredPassword = $("password").value;
 
-        const result = await request(
-            "/auth/login",
-            {
-                method: "POST",
-                body: { password }
-            },
-            false
-        );
-
-        if (!result.token) {
-            throw new Error("Backend did not return a session token.");
+    setTimeout(() => {
+        if (enteredPassword === CFG.ADMIN_PASSWORD) {
+            localStorage.setItem("crochet_admin_auth", "true");
+            showDashboard();
+            toast("Welcome back, Admin!");
+        } else {
+            $("loginError").textContent = "Incorrect admin password.";
         }
-
-        sessionToken = result.token;
-
-        $("password").value = "";
-
-        showDashboard();
-
-    } catch (error) {
-        $("loginError").textContent = error.message;
-    } finally {
         setBusy(button, false, "Sign in");
-    }
+    }, 400);
 }
 
 function showDashboard() {
     $("loginView").classList.add("hidden");
     $("dashboard").classList.remove("hidden");
     $("logoutBtn").classList.remove("hidden");
-
-    setConnection("Connected to GitHub catalog", true);
-
+    setConnection("Connected to Studio", true);
     resetCatalog();
 }
 
-function signOut(showToast = true) {
-    sessionToken = null;
+function logout() {
+    localStorage.removeItem("crochet_admin_auth");
     products = [];
     selectedIds.clear();
 
     $("dashboard").classList.add("hidden");
     $("loginView").classList.remove("hidden");
     $("logoutBtn").classList.add("hidden");
-
-    setConnection("Sign in required", false);
-
-    if (showToast) toast("Signed out.");
+    setConnection("Signed out", false);
+    toast("Signed out successfully.");
 }
 
-function logout() {
-    signOut(true);
+function checkExistingSession() {
+    const isAuth = localStorage.getItem("crochet_admin_auth");
+    if (isAuth === "true") {
+        showDashboard();
+    } else {
+        setConnection("Sign in required");
+    }
 }
 
 // -----------------------------
-// PRODUCT LOADING
+// PRODUCT CATALOG MANAGEMENT
 // -----------------------------
 
 function resetCatalog() {
@@ -238,7 +163,6 @@ function resetCatalog() {
     offset = 0;
     hasMore = true;
     loading = false;
-
     selectedIds.clear();
 
     $("productGrid").innerHTML = "";
@@ -246,52 +170,38 @@ function resetCatalog() {
     $("loading").classList.remove("hidden");
 
     updateStats();
-
     loadProducts();
 }
 
 async function loadProducts() {
     if (loading || !hasMore) return;
-
     loading = true;
+    $("loading").classList.remove("hidden");
 
     try {
-        const params = new URLSearchParams({
-            limit: String(PAGE_SIZE),
-            offset: String(offset)
+        const result = await api("POST", "getProducts", {
+            limit: CFG.PAGE_SIZE,
+            offset: offset,
+            search: searchTerm
         });
 
-        if (searchTerm) {
-            params.set("q", searchTerm);
-        }
+        const newProducts = result.products || [];
+        products.push(...newProducts);
 
-        const result = await request(
-            `/products?${params.toString()}`,
-            { method: "GET" }
-        );
-
-        const rows = result.products || [];
-
-        products.push(...rows);
-
-        offset += rows.length;
-        total = Number(result.total ?? products.length);
+        offset += newProducts.length;
+        total = Number(result.total || products.length);
         hasMore = Boolean(result.has_more);
 
-        renderProducts(rows);
+        renderProducts(newProducts);
         updateStats();
 
-        $("emptyState").classList.toggle(
-            "hidden",
-            products.length !== 0
-        );
-
-        $("resultLabel").textContent =
-            `${total} product${total === 1 ? "" : "s"}`;
-
+        $("emptyState").classList.toggle("hidden", products.length > 0);
+        $("resultLabel").textContent = `${total} product${total === 1 ? "" : "s"}`;
+        $("loading").textContent = hasMore ? "Scroll or load more" : "All products loaded";
         $("loadMoreBtn").classList.toggle("hidden", !hasMore);
 
     } catch (error) {
+        $("loading").textContent = error.message;
         toast(error.message);
     } finally {
         loading = false;
@@ -302,75 +212,41 @@ async function loadProducts() {
 function updateStats() {
     $("totalCount").textContent = total;
     $("loadedCount").textContent = products.length;
-
     $("bulkDeleteBtn").disabled = selectedIds.size === 0;
-
-    $("bulkDeleteBtn").textContent =
-        `Delete selected (${selectedIds.size})`;
+    $("bulkDeleteBtn").textContent = `Delete selected (${selectedIds.size})`;
 }
 
 // -----------------------------
-// PRODUCT DISPLAY
+// RENDERING PRODUCT CARDS
 // -----------------------------
 
-function renderProducts(rows) {
-    const html = rows.map(product => {
+function renderProducts(list) {
+    const html = list.map(product => {
         const id = escapeHTML(product.ID);
         const name = escapeHTML(product.PRODUCT_NAME);
         const category = escapeHTML(product.CATEGORY);
-
         const image = product.IMAGE1
-            ? `<img class="product-image"
-                src="${escapeHTML(product.IMAGE1)}"
-                alt="${name}"
-                loading="lazy">`
+            ? `<img class="product-image" src="${escapeHTML(product.IMAGE1)}" alt="${name}" loading="lazy" onerror="this.style.display='none'">`
             : `<div class="image-placeholder">C&N</div>`;
 
-        const checked = selectedIds.has(String(product.ID))
-            ? "checked"
-            : "";
+        const checked = selectedIds.has(product.ID) ? "checked" : "";
 
         return `
             <article class="product-card">
                 ${image}
-
                 <div class="product-info">
-
                     <label class="select-row">
-                        <input
-                            type="checkbox"
-                            data-select="${id}"
-                            ${checked}
-                        >
+                        <input type="checkbox" data-select="${id}" ${checked}>
                         Select product
                     </label>
-
                     <h3>${name}</h3>
-
-                    <div class="product-meta">
-                        ${id} · ${category}
-                    </div>
-
-                    <div class="product-price">
-                        ₹${Number(product.PRICE || 0).toLocaleString("en-IN")}
-                    </div>
-
-                    <div class="product-meta">
-                        Stock: ${Number(product.STOCK || 0)}
-                    </div>
-
+                    <div class="product-meta">${id} · ${category}</div>
+                    <div class="product-price">₹${Number(product.PRICE || 0).toLocaleString("en-IN")}</div>
+                    <div class="product-meta">Stock: ${Number(product.STOCK || 0)}</div>
                     <div class="product-actions">
-                        <button class="btn btn-outline"
-                            data-edit="${id}">
-                            Edit
-                        </button>
-
-                        <button class="btn btn-danger"
-                            data-delete="${id}">
-                            Delete
-                        </button>
+                        <button class="btn btn-outline" data-edit="${id}">Edit</button>
+                        <button class="btn btn-danger" data-delete="${id}">Delete</button>
                     </div>
-
                 </div>
             </article>
         `;
@@ -380,7 +256,7 @@ function renderProducts(rows) {
 }
 
 // -----------------------------
-// SEARCH
+// SEARCH & PAGINATION
 // -----------------------------
 
 function performSearch() {
@@ -388,21 +264,20 @@ function performSearch() {
     resetCatalog();
 }
 
+function loadMore() {
+    loadProducts();
+}
+
 // -----------------------------
-// PRODUCT EDITOR
+// PRODUCT MODAL EDITOR
 // -----------------------------
 
 function openEditor(product = null) {
-    editingId = product?.ID ?? null;
-
-    assets = Array.isArray(product?.EXTRA_ASSETS)
-        ? JSON.parse(JSON.stringify(product.EXTRA_ASSETS))
-        : [];
+    editingId = product?.ID || null;
+    assets = Array.isArray(product?.EXTRA_ASSETS) ? structuredClone(product.EXTRA_ASSETS) : [];
 
     $("productForm").reset();
-
-    $("modalTitle").textContent =
-        product ? "Edit product" : "Add product";
+    $("modalTitle").textContent = product ? "Edit Product" : "Add New Product";
 
     $("productId").value = product?.ID || "";
     $("productName").value = product?.PRODUCT_NAME || "";
@@ -411,20 +286,13 @@ function openEditor(product = null) {
     $("stock").value = product?.STOCK ?? 0;
     $("instagramUrl").value = product?.INSTA_URL || "";
     $("imageUrl").value = product?.IMAGE1 || "";
-
     $("productId").readOnly = Boolean(product);
 
-    $("badge").value = JSON.stringify(
-        product?.BADGE || {},
-        null,
-        2
-    );
-
+    $("badge").value = JSON.stringify(product?.BADGE || {}, null, 2);
     $("formError").textContent = "";
 
     renderImagePreview();
     renderAssets();
-
     $("productDialog").showModal();
 }
 
@@ -434,287 +302,50 @@ function closeEditor() {
 
 function renderImagePreview() {
     const url = $("imageUrl").value.trim();
-
-    $("mainImagePreview").innerHTML = url
-        ? `<img src="${escapeHTML(url)}" alt="Main image preview">`
-        : "";
+    $("mainImagePreview").innerHTML = url ? `<img src="${escapeHTML(url)}" alt="Preview">` : "";
 }
 
 // -----------------------------
-// PRODUCT VALIDATION
+// IMGBB IMAGE UPLOADER
 // -----------------------------
 
-function validateHttpUrl(value, label) {
-    if (!value) return;
-
-    let parsed;
-
-    try {
-        parsed = new URL(value);
-    } catch {
-        throw new Error(`${label} must be a valid URL.`);
+async function uploadToImgBB(file) {
+    if (!CFG.IMGBB_API_KEY) {
+        throw new Error("ImgBB API key is missing in config.js");
     }
 
-    if (!["http:", "https:"].includes(parsed.protocol)) {
-        throw new Error(`${label} must use HTTP or HTTPS.`);
-    }
-}
+    const formData = new FormData();
+    formData.append("image", file);
 
-function readProductForm() {
-    let badge;
-
-    try {
-        badge = JSON.parse($("badge").value || "{}");
-    } catch {
-        throw new Error("BADGE must contain valid JSON.");
-    }
-
-    if (!badge || typeof badge !== "object" || Array.isArray(badge)) {
-        throw new Error("BADGE must be a JSON object.");
-    }
-
-    const product = {
-        ID: $("productId").value.trim(),
-        PRODUCT_NAME: $("productName").value.trim(),
-        CATEGORY: $("category").value.trim(),
-        PRICE: Number($("price").value),
-        STOCK: Number($("stock").value),
-        IMAGE1: $("imageUrl").value.trim(),
-        EXTRA_ASSETS: assets,
-        INSTA_URL: $("instagramUrl").value.trim(),
-        BADGE: badge
-    };
-
-    if (!product.ID || !product.PRODUCT_NAME) {
-        throw new Error("Product ID and name are required.");
-    }
-
-    if (!Number.isFinite(product.PRICE) || product.PRICE < 0) {
-        throw new Error("Enter a valid price.");
-    }
-
-    if (!Number.isInteger(product.STOCK) || product.STOCK < 0) {
-        throw new Error("Stock must be a whole number.");
-    }
-
-    validateHttpUrl(product.IMAGE1, "Image URL");
-    validateHttpUrl(product.INSTA_URL, "Instagram URL");
-
-    return product;
-}
-
-// -----------------------------
-// SAVE PRODUCT
-// -----------------------------
-
-async function saveProduct(event) {
-    event.preventDefault();
-
-    const button = $("saveBtn");
-
-    setBusy(button, true, "Saving...");
-    $("formError").textContent = "";
-
-    try {
-        const product = readProductForm();
-
-        let result;
-
-        if (editingId !== null) {
-            const update = { ...product };
-            delete update.ID;
-
-            result = await request(
-                `/products/${encodeURIComponent(editingId)}`,
-                {
-                    method: "PATCH",
-                    body: update
-                }
-            );
-
-        } else {
-            result = await request(
-                "/products",
-                {
-                    method: "POST",
-                    body: product
-                }
-            );
-        }
-
-        closeEditor();
-
-        if (result.sync) {
-            showSyncResult(result.sync);
-        }
-
-        toast("Product saved to GitHub catalog.");
-
-        resetCatalog();
-
-    } catch (error) {
-        $("formError").textContent = error.message;
-    } finally {
-        setBusy(button, false, "Save product");
-    }
-}
-
-// -----------------------------
-// DELETE PRODUCT
-// -----------------------------
-
-async function deleteProduct(id) {
-    const product = products.find(
-        item => String(item.ID) === String(id)
-    );
-
-    if (!confirm(
-        `Delete "${product?.PRODUCT_NAME || id}" permanently?`
-    )) return;
-
-    try {
-        await request(
-            `/products/${encodeURIComponent(id)}`,
-            { method: "DELETE" }
-        );
-
-        selectedIds.delete(String(id));
-
-        toast("Product deleted.");
-
-        resetCatalog();
-
-    } catch (error) {
-        toast(error.message);
-    }
-}
-
-// -----------------------------
-// BULK DELETE
-// -----------------------------
-
-async function bulkDelete() {
-    const ids = [...selectedIds];
-
-    if (!ids.length) return;
-
-    if (!confirm(`Delete ${ids.length} selected products?`)) return;
-
-    const button = $("bulkDeleteBtn");
-
-    setBusy(button, true, "Deleting...");
-
-    try {
-        for (const id of ids) {
-            await request(
-                `/products/${encodeURIComponent(id)}`,
-                { method: "DELETE" }
-            );
-        }
-
-        selectedIds.clear();
-
-        toast("Selected products deleted.");
-
-        resetCatalog();
-
-    } catch (error) {
-        showMessage(error.message);
-        resetCatalog();
-    } finally {
-        setBusy(button, false, "Delete selected");
-    }
-}
-
-// -----------------------------
-// IMAGE UPLOAD
-// -----------------------------
-
-function fileToBase64(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-
-        reader.onload = () => {
-            resolve(String(reader.result).split(",")[1]);
-        };
-
-        reader.onerror = () => {
-            reject(new Error("Unable to read image."));
-        };
-
-        reader.readAsDataURL(file);
-    });
-}
-
-async function uploadFile(file, endpoint) {
-    if (!file) throw new Error("Select a file.");
-
-    if (!file.type.startsWith("image/")) {
-        throw new Error("Only image files are supported.");
-    }
-
-    if (file.size > 8 * 1024 * 1024) {
-        throw new Error("Maximum image size is 8 MB.");
-    }
-
-    const base64 = await fileToBase64(file);
-
-    const result = await request(endpoint, {
+    const response = await fetch(`https://api.imgbb.com/1/upload?key=${CFG.IMGBB_API_KEY}`, {
         method: "POST",
-        body: {
-            productName: $("productName").value.trim() || "Product",
-            fileName: file.name,
-            mimeType: file.type,
-            base64
-        }
+        body: formData
     });
 
-    if (!result.url) {
-        throw new Error("Upload service did not return a URL.");
+    const data = await response.json();
+    if (!data.success) {
+        throw new Error("ImgBB upload failed.");
     }
-
-    return result.url;
+    return data.data.url;
 }
 
-async function uploadMainImage(file) {
+async function handleImageUpload(file, isMain = true) {
     try {
-        toast("Uploading main image...");
+        toast("Uploading image to ImgBB...");
+        const url = await uploadToImgBB(file);
 
-        $("imageUrl").value = await uploadFile(
-            file,
-            "/uploads/drive"
-        );
-
-        renderImagePreview();
-
-        toast("Main image uploaded.");
-
+        if (isMain) {
+            $("imageUrl").value = url;
+            renderImagePreview();
+            toast("Main image uploaded successfully.");
+        } else {
+            assets.push({ type: "image", name: file.name, url });
+            renderAssets();
+            toast("Extra image uploaded successfully.");
+        }
     } catch (error) {
         $("formError").textContent = error.message;
-    }
-}
-
-async function uploadExtraImage(file) {
-    try {
-        toast("Uploading extra image...");
-
-        const url = await uploadFile(
-            file,
-            "/uploads/image"
-        );
-
-        assets.push({
-            type: "image",
-            name: file.name,
-            url
-        });
-
-        renderAssets();
-
-        toast("Extra image uploaded.");
-
-    } catch (error) {
-        $("formError").textContent = error.message;
+        toast("Upload failed.");
     }
 }
 
@@ -724,18 +355,7 @@ async function uploadExtraImage(file) {
 
 function addAssetUrl() {
     const url = $("assetUrl").value.trim();
-
-    if (!url) {
-        toast("Enter an asset URL.");
-        return;
-    }
-
-    try {
-        validateHttpUrl(url, "Asset URL");
-    } catch (error) {
-        toast(error.message);
-        return;
-    }
+    if (!url) return toast("Enter an asset URL.");
 
     assets.push({
         type: $("assetType").value,
@@ -744,134 +364,195 @@ function addAssetUrl() {
     });
 
     $("assetUrl").value = "";
-
     renderAssets();
 }
 
 function renderAssets() {
     $("assetList").innerHTML = assets.map((asset, index) => `
         <div class="asset-item">
-            <b>${escapeHTML(asset.type || "asset")}</b>
-
-            <span>
-                ${escapeHTML(asset.name || asset.url)}
-            </span>
-
-            <button
-                type="button"
-                data-remove-asset="${index}"
-                aria-label="Remove asset">
-                ×
-            </button>
+            <b>${escapeHTML(asset.type)}</b>
+            <span>${escapeHTML(asset.name || asset.url)}</span>
+            <button type="button" data-remove-asset="${index}">×</button>
         </div>
     `).join("");
 }
 
 // -----------------------------
-// GOOGLE SHEETS SYNC
+// SAVE PRODUCT
 // -----------------------------
 
-function showSyncResult(sync) {
-    if (sync?.success) {
-        $("sheetStatus").textContent = "Synced";
+async function saveProduct(event) {
+    event.preventDefault();
+    const button = $("saveBtn");
+    setBusy(button, true, "Saving...");
+    $("formError").textContent = "";
 
-        showMessage(
-            "GitHub catalog saved. Sheet7 synchronized.",
-            true
-        );
-    } else {
-        $("sheetStatus").textContent = "Pending";
+    try {
+        let badge = {};
+        try {
+            badge = JSON.parse($("badge").value || "{}");
+        } catch {
+            throw new Error("BADGE must contain valid JSON.");
+        }
 
-        showMessage(
-            "Catalog saved, but Sheet7 synchronization is pending.",
-            false
-        );
+        const payload = {
+            ID: $("productId").value.trim(),
+            PRODUCT_NAME: $("productName").value.trim(),
+            CATEGORY: $("category").value.trim(),
+            PRICE: Number($("price").value),
+            STOCK: Number($("stock").value),
+            IMAGE1: $("imageUrl").value.trim(),
+            EXTRA_ASSETS: assets,
+            INSTA_URL: $("instagramUrl").value.trim(),
+            BADGE: badge
+        };
+
+        if (!payload.ID || !payload.PRODUCT_NAME) {
+            throw new Error("Product ID and Name are required.");
+        }
+
+        const action = editingId ? "updateProduct" : "createProduct";
+        await api("POST", action, { product: payload, id: editingId });
+
+        closeEditor();
+        toast(editingId ? "Product updated successfully." : "Product created successfully.");
+        resetCatalog();
+
+    } catch (error) {
+        $("formError").textContent = error.message;
+    } finally {
+        setBusy(button, false, "Save Product");
     }
 }
 
-async function retrySheetSync() {
-    const button = $("syncBtn");
+// -----------------------------
+// DELETE & BULK DELETE
+// -----------------------------
 
+async function deleteProduct(id) {
+    const product = products.find(item => item.ID === id);
+    if (!confirm(`Delete "${product?.PRODUCT_NAME || id}" permanently?`)) return;
+
+    try {
+        await api("POST", "deleteProduct", { id });
+        selectedIds.delete(id);
+        toast("Product deleted.");
+        resetCatalog();
+    } catch (error) {
+        toast(error.message);
+    }
+}
+
+async function bulkDelete() {
+    const ids = [...selectedIds];
+    if (!ids.length || !confirm(`Delete ${ids.length} selected products?`)) return;
+
+    const button = $("bulkDeleteBtn");
+    setBusy(button, true, "Deleting...");
+
+    try {
+        await api("POST", "bulkDeleteProducts", { ids });
+        selectedIds.clear();
+        toast("Selected products deleted.");
+        resetCatalog();
+    } catch (error) {
+        toast(error.message);
+        resetCatalog();
+    } finally {
+        setBusy(button, false, "Delete selected");
+    }
+}
+
+// -----------------------------
+// GOOGLE SHEETS / APPS SCRIPT SYNC
+// -----------------------------
+
+async function syncSheets() {
+    const button = $("syncBtn");
     setBusy(button, true, "Syncing...");
 
     try {
-        await request("/sync/sheet7", {
-            method: "POST",
-            body: {}
-        });
-
+        const result = await api("POST", "syncSheets");
         $("sheetStatus").textContent = "Synced";
-
-        showMessage(
-            "Sheet7 synchronized successfully.",
-            true
-        );
-
-        toast("Google Sheets synchronization complete.");
-
+        showMessage("Google Sheets synchronized successfully.", true);
+        toast("Sync complete.");
     } catch (error) {
         $("sheetStatus").textContent = "Failed";
         showMessage(error.message);
-
     } finally {
-        setBusy(button, false, "Sync Sheet7");
+        setBusy(button, false, "Sync Sheets");
     }
 }
 
 // -----------------------------
-// EVENT LISTENERS
+// EVENT BINDINGS
 // -----------------------------
 
 function bindEvents() {
-
     $("loginForm").addEventListener("submit", login);
-
     $("logoutBtn").addEventListener("click", logout);
+    $("addProductBtn").addEventListener("click", () => openEditor());
+    $("closeModalBtn").addEventListener("click", closeEditor);
+    $("cancelBtn").addEventListener("click", closeEditor);
+    $("productForm").addEventListener("submit", saveProduct);
 
-    $("addProductBtn").addEventListener(
-        "click",
-        () => openEditor()
-    );
+    $("imageUrl").addEventListener("input", renderImagePreview);
 
-    $("closeModalBtn").addEventListener(
-        "click",
-        closeEditor
-    );
-
-    $("cancelBtn").addEventListener(
-        "click",
-        closeEditor
-    );
-
-    $("productForm").addEventListener(
-        "submit",
-        saveProduct
-    );
-
-    $("imageUrl").addEventListener(
-        "input",
-        renderImagePreview
-    );
-
-    $("mainImageFile").addEventListener("change", event => {
-        const file = event.target.files?.[0];
-
-        if (file) uploadMainImage(file);
-
-        event.target.value = "";
+    $("mainImageFile").addEventListener("change", e => {
+        const file = e.target.files?.[0];
+        if (file) handleImageUpload(file, true);
+        e.target.value = "";
     });
 
-    $("extraAssetFile").addEventListener("change", event => {
-        const file = event.target.files?.[0];
-
-        if (file) uploadExtraImage(file);
-
-        event.target.value = "";
+    $("extraAssetFile").addEventListener("change", e => {
+        const file = e.target.files?.[0];
+        if (file) handleImageUpload(file, false);
+        e.target.value = "";
     });
 
-    $("addAssetBtn").addEventListener(
-        "click",
-        addAssetUrl
-    );
+    $("addAssetBtn").addEventListener("click", addAssetUrl);
+    $("refreshBtn").addEventListener("click", resetCatalog);
+    $("searchBtn").addEventListener("click", performSearch);
+    $("searchInput").addEventListener("keydown", e => { if (e.key === "Enter") performSearch(); });
+    $("loadMoreBtn").addEventListener("click", loadMore);
+    $("syncBtn").addEventListener("click", syncSheets);
+    $("bulkDeleteBtn").addEventListener("click", bulkDelete);
 
-    $("refreshBtn").addEven
+    $("productGrid").addEventListener("click", e => {
+        const editBtn = e.target.closest("[data-edit]");
+        const deleteBtn = e.target.closest("[data-delete]");
+
+        if (editBtn) {
+            const product = products.find(i => i.ID === editBtn.dataset.edit);
+            if (product) openEditor(product);
+        }
+        if (deleteBtn) {
+            deleteProduct(deleteBtn.dataset.delete);
+        }
+    });
+
+    $("productGrid").addEventListener("change", e => {
+        const checkbox = e.target.closest("[data-select]");
+        if (!checkbox) return;
+        const id = checkbox.dataset.select;
+        if (checkbox.checked) selectedIds.add(id);
+        else selectedIds.delete(id);
+        updateStats();
+    });
+
+    $("assetList").addEventListener("click", e => {
+        const btn = e.target.closest("[data-remove-asset]");
+        if (!btn) return;
+        assets.splice(Number(btn.dataset.removeAsset), 1);
+        renderAssets();
+    });
+
+    $("productDialog").addEventListener("click", e => {
+        if (e.target === $("productDialog")) closeEditor();
+    });
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    bindEvents();
+    checkExistingSession();
+});
