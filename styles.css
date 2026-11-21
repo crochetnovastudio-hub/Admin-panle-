@@ -1,4 +1,3 @@
-
 :root {
     --bg: #151118;
     --panel: #211b25;
@@ -20,9 +19,7 @@ body {
     margin: 0;
     min-height: 100vh;
     color: var(--text);
-    background:
-        radial-gradient(ellipse at top left, #382632 0, transparent 42%),
-        var(--bg);
+    background: radial-gradient(ellipse at top left, #382632 0, transparent 42%), var(--bg);
     font-family: "DM Sans", sans-serif;
 }
 
@@ -453,10 +450,6 @@ input::placeholder {
     width: 105px;
 }
 
-.asset-controls button {
-    white-space: nowrap;
-}
-
 .asset-item {
     display: flex;
     align-items: center;
@@ -520,70 +513,10 @@ input::placeholder {
 }
 
 @media (max-width: 650px) {
-    .topbar {
-        padding: 0 3%;
+    .topbar { padding: 0 3%; }
+    .container { width: 92%; padding-top: 22px; }
+    .product-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .form-grid { grid-template-columns: 1fr; }
+    .full { grid-column: auto; }
     }
-
-    .container {
-        width: 92%;
-        padding-top: 22px;
-    }
-
-    .page-heading {
-        align-items: flex-start;
-        flex-direction: column;
-    }
-
-    .stats-grid {
-        gap: 7px;
-    }
-
-    .stat-card {
-        padding: 12px;
-    }
-
-    .stat-card strong {
-        font-size: 20px;
-    }
-
-    .product-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px;
-    }
-
-    .product-image, .image-placeholder {
-        height: 135px;
-    }
-
-    .toolbar > button {
-        flex: 1;
-    }
-
-    .form-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .full {
-        grid-column: auto;
-    }
-
-    #productForm {
-        padding: 17px;
-    }
-
-    .asset-controls {
-        flex-wrap: wrap;
-    }
-
-    .asset-controls input {
-        flex-basis: 100%;
-    }
-
-    .brand strong {
-        font-size: 10px;
-    }
-
-    .status {
-        font-size: 10px;
-    }
-}
+        
