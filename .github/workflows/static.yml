@@ -41,3 +41,11 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+        
+        - name: Generate config.js
+  run: |
+    sed -i 's|__APPS_SCRIPT_URL__|${{ vars.APPS_SCRIPT_URL }}|g' config.template.js
+    sed -i 's|__IMGBB_API_KEY__|${{ secrets.IMGBB_API_KEY }}|g' config.template.js
+    sed -i 's|__ADMIN_PASSWORD__|${{ secrets.ADMIN_PASSWORD }}|g' config.template.js
+    mv config.template.js config.js
+    
