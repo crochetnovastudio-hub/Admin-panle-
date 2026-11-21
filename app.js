@@ -11,6 +11,7 @@ let editingId = null;
 let assets = [];
 let searchTerm = "";
 let selectedIds = new Set();
+let isAuthenticated = false;
 
 const $ = id => document.getElementById(id);
 
@@ -113,11 +114,12 @@ function login(event) {
     const enteredPassword = $("password").value;
 
     setTimeout(() => {
-        if (enteredPassword === CFG.ADMIN_PASSWORD) {
-            localStorage.setItem("crochet_admin_auth", "true");
+        if (CFG?.ADMIN_PASSWORD && enteredPassword === CFG.ADMIN_PASSWORD) {
+            isAuthenticated = true;
             showDashboard();
             toast("Welcome back, Admin!");
         } else {
+            isAuthenticated = false;
             $("loginError").textContent = "Incorrect admin password.";
         }
         setBusy(button, false, "Sign in");
@@ -125,6 +127,8 @@ function login(event) {
 }
 
 function showDashboard() {
+    // Never reveal the dashboard unless this page session passed password verification.
+    if (!isAuthenticated) return;
     $("loginView").classList.add("hidden");
     $("dashboard").classList.remove("hidden");
     $("logoutBtn").classList.remove("hidden");
@@ -133,24 +137,22 @@ function showDashboard() {
 }
 
 function logout() {
-    localStorage.removeItem("crochet_admin_auth");
+    isAuthenticated = false;
     products = [];
     selectedIds.clear();
 
     $("dashboard").classList.add("hidden");
     $("loginView").classList.remove("hidden");
     $("logoutBtn").classList.add("hidden");
+    $("password").value = "";
     setConnection("Signed out", false);
     toast("Signed out successfully.");
 }
 
 function checkExistingSession() {
-    const isAuth = localStorage.getItem("crochet_admin_auth");
-    if (isAuth === "true") {
-        showDashboard();
-    } else {
-        setConnection("Sign in required");
-    }
+    // Require password verification on every page load; do not restore auth from localStorage.
+    isAuthenticated = false;
+    setConnection("Sign in required");
 }
 
 // -----------------------------
